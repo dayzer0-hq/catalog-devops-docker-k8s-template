@@ -1,0 +1,15 @@
+.git
+.github
+.gitignore
+.venv
+venv
+__pycache__
+*.pyc
+.pytest_cache
+tests
+k8s
+compose.yaml
+Makefile
+README.md
+.env
+.env.*

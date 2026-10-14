@@ -1,0 +1,52 @@
+# Local stack: the service plus the one dependency it checks for readiness.
+# No secret is written in this file. POSTGRES_PASSWORD must come from the
+# environment (copy .env.example to .env); `:?` makes compose refuse to start
+# rather than quietly defaulting to something guessable.
+services:
+  app:
+    build: .
+    ports:
+      # 127.0.0.1, not 0.0.0.0: a bare "8080:8080" publishes this on every
+      # interface, so a dev stack with no auth is reachable by anyone on the
+      # cafe wifi. Drop the prefix only if you mean to share it.
+      - "127.0.0.1:8080:8080"
+    # The k8s manifests drop capabilities and forbid privilege escalation;
+    # compose is what a student actually runs, so it says the same thing.
+    # A baseline that is only hardened in the file nobody runs is not one.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 256m
+    environment:
+      APP_ENV: development
+      LOG_LEVEL: INFO
+      DATABASE_URL: postgresql://app:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/app
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/health').read()"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+  db:
+    image: postgres:16.9-alpine@sha256:7c688148e5e156d0e86df7ba8ae5a05a2386aaec1e2ad8e6d11bdf10504b1fb7
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_DB: app
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d app"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:

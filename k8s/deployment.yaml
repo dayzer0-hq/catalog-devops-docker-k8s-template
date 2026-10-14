@@ -1,0 +1,87 @@
+# Probes live here; what they hit lives in app/health.py.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: catalog
+  labels:
+    app: catalog
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: catalog
+  template:
+    metadata:
+      labels:
+        app: catalog
+    spec:
+      # This app never calls the Kubernetes API, so it does not need a token
+      # for it. Mounting one anyway means any RCE in a student's code hands
+      # the attacker a cluster credential it never had a use for.
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        # Without runAsGroup the primary group is gid 0 — the pod override
+        # replaces the image's own group, so USER appuser in the Dockerfile
+        # does NOT carry it. Harmless until someone mounts a writable volume,
+        # at which point it is root-group-owned.
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: catalog
+          # Replace with your built image. Never :latest — a rollout you cannot
+          # name is a rollout you cannot roll back.
+          image: catalog:0.1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: catalog-config
+          env:
+            # Written by the Secret you create out of band; see README.
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: catalog-db
+                  key: DATABASE_URL
+          # Restart only on a dead process.
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+          # Take it out of the Service while a dependency is down.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 96Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        # readOnlyRootFilesystem is why this exists: gunicorn needs a writable /tmp.
+        - name: tmp
+          emptyDir: {}
